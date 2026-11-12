@@ -1,0 +1,6 @@
+{
+  "name": "اعرف حقك — المستشار القانوني والدعم النفسي",
+  "description": "منصة ذكاء اصطناعي مصرية متكاملة للاستشارات القانونية المؤصلة بنصوص القوانين المصرية والدعم النفسي التكيفي وفحص العقود.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

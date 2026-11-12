@@ -1,0 +1,214 @@
+{
+  "entities": {
+    "UserPrivateProfile": {
+      "title": "User Private Profile",
+      "description": "Isolated private profile and preferences for an authenticated user.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the owner."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 254,
+          "description": "Verified email address of the user."
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Display name from Google account."
+        },
+        "photoURL": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Avatar URL from Google account."
+        },
+        "privacyMode": {
+          "type": "string",
+          "enum": ["15m", "60m", "close", "manual"],
+          "description": "Selected auto-wipe privacy timer."
+        },
+        "maskPiiOnSend": {
+          "type": "boolean",
+          "description": "Whether national IDs and phone numbers are masked automatically."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the profile was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the profile was last updated."
+        }
+      },
+      "required": ["uid", "email", "displayName", "privacyMode", "maskPiiOnSend", "createdAt", "updatedAt"]
+    },
+    "UserConsultation": {
+      "title": "User Consultation",
+      "description": "A private legal consultation session belonging to a verified user.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Unique consultation ID."
+        },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the consultation owner."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Short title summarizing the consultation."
+        },
+        "domain": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Matched Egyptian legal domain."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "archived"],
+          "description": "Lifecycle state of the consultation."
+        },
+        "messageCount": {
+          "type": "number",
+          "description": "Count of messages in the subcollection."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": ["id", "ownerId", "title", "domain", "status", "messageCount", "createdAt", "updatedAt"]
+    },
+    "ConsultationMessage": {
+      "title": "Consultation Message",
+      "description": "An individual message inside a user's consultation subcollection.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Unique message ID."
+        },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the consultation owner."
+        },
+        "consultationId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Parent consultation document ID."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["user", "assistant"],
+          "description": "Speaker role."
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 15000,
+          "description": "Markdown message body."
+        },
+        "matchedDomain": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Egyptian legal domain matched for this reply."
+        },
+        "sentimentLabel": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Detected emotional support state."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when message was written."
+        }
+      },
+      "required": ["id", "ownerId", "consultationId", "role", "content", "createdAt"]
+    },
+    "UserFeedbackEntry": {
+      "title": "User Feedback Entry",
+      "description": "Anonymized training and correction feedback submitted by a verified user.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Unique feedback entry ID."
+        },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the submitter."
+        },
+        "domain": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Egyptian legal domain."
+        },
+        "isHelpful": {
+          "type": "boolean",
+          "description": "Whether the consultation guidance was accurate and helpful."
+        },
+        "correctionNote": {
+          "type": "string",
+          "maxLength": 600,
+          "description": "Optional PII-scrubbed correction note used to train prevention rules."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of feedback submission."
+        }
+      },
+      "required": ["id", "ownerId", "domain", "isHelpful", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/private/{docId}": {
+      "schema": { "$ref": "#/entities/UserPrivateProfile" },
+      "description": "Isolated private user profile and privacy preferences (docId = profile)."
+    },
+    "/users/{userId}/consultations/{consultationId}": {
+      "schema": { "$ref": "#/entities/UserConsultation" },
+      "description": "Private legal consultation threads owned by the authenticated user."
+    },
+    "/users/{userId}/consultations/{consultationId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/ConsultationMessage" },
+      "description": "Ordered messages within a specific consultation owned by the user."
+    },
+    "/users/{userId}/feedback/{feedbackId}": {
+      "schema": { "$ref": "#/entities/UserFeedbackEntry" },
+      "description": "Training feedback records logged by the authenticated user."
+    }
+  }
+}

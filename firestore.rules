@@ -1,0 +1,157 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net (Default-Deny Catch-All)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Reusable Hardened Primitives
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isVerifiedUser() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidProfile(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'privacyMode', 'maskPiiOnSend', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'displayName', 'photoURL', 'privacyMode', 'maskPiiOnSend', 'createdAt', 'updatedAt'])
+        && data.uid is string && data.uid == userId && data.uid == request.auth.uid && data.uid.size() <= 128
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 254
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120
+        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 500))
+        && data.privacyMode is string && data.privacyMode in ['15m', '60m', 'close', 'manual']
+        && data.maskPiiOnSend is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidConsultation(data, userId, consultationId) {
+      return data.keys().hasAll(['id', 'ownerId', 'title', 'domain', 'status', 'messageCount', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'ownerId', 'title', 'domain', 'status', 'messageCount', 'createdAt', 'updatedAt'])
+        && data.id is string && data.id == consultationId && data.id.size() <= 128
+        && data.ownerId is string && data.ownerId == userId && data.ownerId == request.auth.uid && data.ownerId.size() <= 128
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 200
+        && data.domain is string && data.domain.size() >= 1 && data.domain.size() <= 120
+        && data.status is string && data.status in ['active', 'archived']
+        && data.messageCount is int && data.messageCount >= 0 && data.messageCount <= 500
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidConsultationMessage(data, userId, consultationId, messageId) {
+      return data.keys().hasAll(['id', 'ownerId', 'consultationId', 'role', 'content', 'createdAt'])
+        && data.keys().hasOnly(['id', 'ownerId', 'consultationId', 'role', 'content', 'matchedDomain', 'sentimentLabel', 'createdAt'])
+        && data.id is string && data.id == messageId && data.id.size() <= 128
+        && data.ownerId is string && data.ownerId == userId && data.ownerId == request.auth.uid && data.ownerId.size() <= 128
+        && data.consultationId is string && data.consultationId == consultationId && data.consultationId.size() <= 128
+        && data.role is string && data.role in ['user', 'assistant']
+        && data.content is string && data.content.size() >= 1 && data.content.size() <= 15000
+        && (!('matchedDomain' in data) || (data.matchedDomain is string && data.matchedDomain.size() <= 120))
+        && (!('sentimentLabel' in data) || (data.sentimentLabel is string && data.sentimentLabel.size() <= 120))
+        && data.createdAt is timestamp;
+    }
+
+    function isValidFeedback(data, userId, feedbackId) {
+      return data.keys().hasAll(['id', 'ownerId', 'domain', 'isHelpful', 'createdAt'])
+        && data.keys().hasOnly(['id', 'ownerId', 'domain', 'isHelpful', 'correctionNote', 'createdAt'])
+        && data.id is string && data.id == feedbackId && data.id.size() <= 128
+        && data.ownerId is string && data.ownerId == userId && data.ownerId == request.auth.uid && data.ownerId.size() <= 128
+        && data.domain is string && data.domain.size() >= 1 && data.domain.size() <= 120
+        && data.isHelpful is bool
+        && (!('correctionNote' in data) || (data.correctionNote is string && data.correctionNote.size() <= 600))
+        && data.createdAt is timestamp;
+    }
+
+    // 1. Split PII Private User Profile
+    match /users/{userId}/private/{docId} {
+      allow get: if isOwner(userId) && isValidId(docId) && docId == 'profile';
+      allow list: if false;
+      allow create: if isOwner(userId)
+        && isValidId(docId)
+        && docId == 'profile'
+        && isValidProfile(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isOwner(userId)
+        && isValidId(docId)
+        && docId == 'profile'
+        && isValidProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'displayName', 'photoURL', 'privacyMode', 'maskPiiOnSend', 'updatedAt']);
+      allow delete: if isOwner(userId) && isValidId(docId) && docId == 'profile';
+    }
+
+    // 2. Private User Consultations
+    match /users/{userId}/consultations/{consultationId} {
+      allow get: if isOwner(userId) && isValidId(consultationId);
+      allow list: if isOwner(userId) && existing().ownerId == request.auth.uid;
+      allow create: if isOwner(userId)
+        && isValidId(consultationId)
+        && isValidConsultation(incoming(), userId, consultationId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isOwner(userId)
+        && isValidId(consultationId)
+        && isValidConsultation(incoming(), userId, consultationId)
+        && existing().status != 'archived'
+        && incoming().id == existing().id
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['title', 'domain', 'messageCount', 'updatedAt'])
+          || incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+        );
+      allow delete: if isOwner(userId) && isValidId(consultationId);
+
+      // 3. Consultation Messages Subcollection (Master Gate Relational Sync)
+      match /messages/{messageId} {
+        allow get: if isOwner(userId) && isValidId(consultationId) && isValidId(messageId);
+        allow list: if isOwner(userId) && existing().ownerId == request.auth.uid;
+        allow create: if isOwner(userId)
+          && isValidId(consultationId)
+          && isValidId(messageId)
+          && isValidConsultationMessage(incoming(), userId, consultationId, messageId)
+          && incoming().createdAt == request.time
+          && exists(/databases/$(database)/documents/users/$(userId)/consultations/$(consultationId))
+          && get(/databases/$(database)/documents/users/$(userId)/consultations/$(consultationId)).data.ownerId == request.auth.uid
+          && get(/databases/$(database)/documents/users/$(userId)/consultations/$(consultationId)).data.status == 'active';
+        allow update: if false;
+        allow delete: if isOwner(userId) && isValidId(consultationId) && isValidId(messageId);
+      }
+    }
+
+    // 4. User Feedback & Training Contributions
+    match /users/{userId}/feedback/{feedbackId} {
+      allow get: if isOwner(userId) && isValidId(feedbackId);
+      allow list: if isOwner(userId) && existing().ownerId == request.auth.uid;
+      allow create: if isOwner(userId)
+        && isValidId(feedbackId)
+        && isValidFeedback(incoming(), userId, feedbackId)
+        && incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isOwner(userId) && isValidId(feedbackId);
+    }
+  }
+}

@@ -131,3 +131,13 @@ export interface DraftedDocumentResult {
   requiredAttachments: string[];
   filingSteps: string[];
 }
+
+export interface EmailUserProfile {
+  uid: string;
+  email: string;
+  displayName: string;
+  emailVerified: boolean;
+  createdAt?: string;
+  lastLoginAt?: string;
+}
+

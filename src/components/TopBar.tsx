@@ -1,6 +1,6 @@
 import React from 'react';
-import { LogIn, LogOut, Menu, Plus } from 'lucide-react';
-import type { User } from 'firebase/auth';
+import { LogIn, LogOut, MailCheck, Menu, Plus } from 'lucide-react';
+import type { EmailUserProfile } from '../types/legal';
 
 export type WorkspaceTab = 'consult' | 'scanner' | 'drafter' | 'calculator' | 'hub';
 
@@ -9,7 +9,7 @@ interface TopBarProps {
   onSelectTab: (tab: WorkspaceTab) => void;
   onNewConsultation: () => void;
   onOpenMobileSidebar: () => void;
-  user: User | null;
+  user: EmailUserProfile | null;
   authBusy: boolean;
   onSignIn: () => void;
   onSignOut: () => void;
@@ -33,7 +33,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onSignIn,
   onSignOut,
 }) => {
-  const firstName = user?.displayName?.split(' ')[0] || 'حسابي';
+  const firstName = user?.displayName?.split(' ')[0] || user?.email?.split('@')[0] || 'حسابي';
 
   return (
     <header className="no-print sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-amber-900/10 bg-[#FAF9F6]/95 px-4 py-3 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 sm:px-6">
@@ -105,25 +105,22 @@ export const TopBar: React.FC<TopBarProps> = ({
         })}
       </nav>
 
-      {/* Zone 3: Primary action + Google Sign-In / Sign-Out */}
+      {/* Zone 3: Primary action + Email OTP Sign-In / Sign-Out */}
       <div className="flex items-center gap-2.5 shrink-0">
         {user ? (
-          <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 dark:border-slate-700 dark:bg-slate-800">
-            {user.photoURL ? (
-              <img
-                src={user.photoURL}
-                alt={user.displayName ?? 'صورة المستخدم'}
-                referrerPolicy="no-referrer"
-                className="h-6 w-6 rounded-full object-cover"
-              />
-            ) : (
-              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-teal-700 text-xs font-bold text-white">
-                {firstName.slice(0, 1)}
-              </span>
-            )}
-            <span className="hidden sm:inline text-sm font-semibold text-slate-800 dark:text-slate-100 max-w-[100px] truncate">
-              {firstName}
+          <div className="flex items-center gap-2 rounded-lg border border-teal-200 bg-white px-2.5 py-1.5 dark:border-teal-800/70 dark:bg-slate-800">
+            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-teal-700 text-xs font-bold text-white">
+              {firstName.slice(0, 1)}
             </span>
+            <div className="hidden sm:flex flex-col leading-tight">
+              <span className="flex items-center gap-1 text-xs font-bold text-slate-800 dark:text-slate-100 max-w-[110px] truncate">
+                {firstName}
+                <MailCheck className="h-3 w-3 text-teal-600 dark:text-teal-400 shrink-0" />
+              </span>
+              <span className="text-[10px] text-slate-500 dark:text-slate-400 max-w-[110px] truncate" dir="ltr">
+                {user.email}
+              </span>
+            </div>
             <button
               type="button"
               onClick={onSignOut}
@@ -143,7 +140,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 transition-colors hover:border-teal-700/40 hover:bg-teal-50/40 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 whitespace-nowrap shrink-0"
           >
             <LogIn className="h-4 w-4 text-teal-700 dark:text-teal-400" />
-            <span>دخول بجوجل</span>
+            <span>تسجيل الدخول</span>
           </button>
         )}
 

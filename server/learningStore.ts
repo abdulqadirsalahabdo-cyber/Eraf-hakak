@@ -133,9 +133,13 @@ export function retrieveLearnedLessons(query: string, domain: string, limit = 3)
   const normQuery = normalizeAr(query);
   const tokens = normQuery.split(/\s+/).filter((t) => t.length >= 3);
 
-  const scored = store.lessons.map((lesson) => {
-    let score = 0;
-    if (lesson.domain === domain) score += 10;
+  // Strict domain boundary: only retrieve lessons belonging to the exact matched legal domain
+  const domainLessons = store.lessons.filter(
+    (lesson) => normalizeAr(lesson.domain) === normalizeAr(domain)
+  );
+
+  const scored = domainLessons.map((lesson) => {
+    let score = 10;
     if (lesson.type === 'correction') score += 4;
     const normLesson = normalizeAr(`${lesson.patternSummary} ${lesson.preventionRule}`);
     for (const tok of tokens) {
@@ -145,10 +149,7 @@ export function retrieveLearnedLessons(query: string, domain: string, limit = 3)
   });
 
   scored.sort((a, b) => b.score - a.score);
-  return scored
-    .filter((s) => s.score >= 4)
-    .slice(0, limit)
-    .map((s) => s.lesson);
+  return scored.slice(0, limit).map((s) => s.lesson);
 }
 
 /**

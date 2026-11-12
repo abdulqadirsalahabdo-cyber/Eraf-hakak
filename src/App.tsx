@@ -1,26 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { User } from 'firebase/auth';
 import { X } from 'lucide-react';
 import type {
   AttachmentPayload,
   AutoDeleteOption,
   ChatMessage,
   ConsultationMeta,
+  EmailUserProfile,
   HotlineEntry,
   LawArticle,
   PlatformInsights,
   SavedConsultation,
 } from './types/legal';
-import {
-  deleteConsultationFromFirestore,
-  loadConsultationsFromFirestore,
-  logFeedbackToFirestore,
-  saveConsultationToFirestore,
-  signInWithGoogle,
-  signOutUser,
-  subscribeAuth,
-  syncUserProfile,
-} from './firebase';
+import './firebase';
 import { TopBar, type WorkspaceTab } from './components/TopBar';
 import { Sidebar } from './components/Sidebar';
 import { ConsultationWorkspace } from './components/ConsultationWorkspace';
@@ -29,10 +20,12 @@ import { LegalDrafter } from './components/LegalDrafter';
 import { RightsCalculator } from './components/RightsCalculator';
 import { KnowledgeAndEmergencyHub } from './components/KnowledgeAndEmergencyHub';
 import { BreathingAnchor } from './components/BreathingAnchor';
+import { AuthModal } from './components/AuthModal';
 
 const STORAGE_KEY = 'e3raf_ha2ak_consultations_v1';
 const THEME_KEY = 'e3raf_ha2ak_theme';
 const PRIVACY_KEY = 'e3raf_ha2ak_privacy_mode';
+const SESSION_TOKEN_KEY = 'e3raf_ha2ak_session_token';
 
 function scrubClientPII(text: string): string {
   return text
@@ -45,9 +38,17 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('consult');
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [showBreathingModal, setShowBreathingModal] = useState(false);
+  const [showAuthModal, setShowAuthModal] = useState(false);
 
-  // Firebase Auth state
-  const [user, setUser] = useState<User | null>(null);
+  // Popup-free Email OTP Auth state
+  const [user, setUser] = useState<EmailUserProfile | null>(null);
+  const [sessionToken, setSessionToken] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(SESSION_TOKEN_KEY);
+    } catch {
+      return null;
+    }
+  });
   const [authBusy, setAuthBusy] = useState(false);
   const [authNotice, setAuthNotice] = useState<string | null>(null);
 
@@ -112,56 +113,91 @@ export default function App() {
     return [];
   });
 
-  // Subscribe to Firebase Auth changes & sync Firestore consultations
+  // Restore Email OTP Session on Mount
   useEffect(() => {
-    const unsub = subscribeAuth(async (firebaseUser) => {
-      setUser(firebaseUser);
-      if (firebaseUser && firebaseUser.emailVerified) {
-        try {
-          await syncUserProfile(firebaseUser, autoDeleteOption, maskPiiOnSend);
-          const cloudList = await loadConsultationsFromFirestore(firebaseUser);
-          if (cloudList.length > 0) {
-            setSavedConsultations(cloudList);
-          }
-        } catch {
-          // Graceful non-fatal sync
+    let active = true;
+    async function restoreSession() {
+      try {
+        const headers: Record<string, string> = {};
+        if (sessionToken) {
+          headers.Authorization = `Bearer ${sessionToken}`;
         }
+        const resp = await fetch('/api/auth/session', { headers });
+        if (!resp.ok) return;
+        const data = (await resp.json()) as {
+          user?: EmailUserProfile | null;
+          consultations?: SavedConsultation[];
+        };
+        if (!active) return;
+        if (data.user) {
+          setUser(data.user);
+          if (Array.isArray(data.consultations) && data.consultations.length > 0) {
+            setSavedConsultations(data.consultations);
+          }
+        } else if (sessionToken) {
+          setSessionToken(null);
+          try {
+            localStorage.removeItem(SESSION_TOKEN_KEY);
+          } catch {
+            // Ignore storage errors
+          }
+        }
+      } catch {
+        // Non-fatal session restore failure
       }
-    });
-    return () => unsub();
-  }, [autoDeleteOption, maskPiiOnSend]);
-
-  const handleSignIn = async () => {
-    if (authBusy) return;
-    setAuthBusy(true);
-    setAuthNotice(null);
-    try {
-      const signedUser = await signInWithGoogle();
-      setAuthNotice(`مرحباً بك يا ${signedUser.displayName ?? 'مواطننا الكريم'} — تم تسجيل الدخول بنجاح.`);
-      window.setTimeout(() => setAuthNotice(null), 4000);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : '';
-      if (!msg.includes('popup-closed-by-user')) {
-        setAuthNotice('تعذر إتمام تسجيل الدخول بجوجل، يرجى السماح بالنوافذ المنبثقة والمحاولة مرة أخرى.');
-      }
-    } finally {
-      setAuthBusy(false);
     }
+    void restoreSession();
+    return () => {
+      active = false;
+    };
+  }, [sessionToken]);
+
+  const handleOpenSignInModal = () => {
+    setShowAuthModal(true);
+  };
+
+  const handleAuthenticated = (
+    signedUser: EmailUserProfile,
+    token: string,
+    serverConsultations: SavedConsultation[]
+  ) => {
+    setUser(signedUser);
+    setSessionToken(token);
+    try {
+      localStorage.setItem(SESSION_TOKEN_KEY, token);
+    } catch {
+      // Ignore storage errors
+    }
+    if (serverConsultations.length > 0) {
+      setSavedConsultations(serverConsultations);
+    }
+    setAuthNotice(
+      `مرحباً بك يا ${signedUser.displayName} (${signedUser.email}) — تم تأكيد حسابك وتسجيل الدخول بنجاح.`
+    );
+    window.setTimeout(() => setAuthNotice(null), 5000);
   };
 
   const handleSignOut = async () => {
     if (authBusy) return;
     setAuthBusy(true);
     try {
-      await signOutUser();
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch {
+      // Proceed cleanly with local signout
+    } finally {
+      setUser(null);
+      setSessionToken(null);
       setSavedConsultations([]);
       setMessages([]);
       setActiveConsultationId(null);
-      setAuthNotice('تم تسجيل الخروج بنجاح، وبياناتك محمية.');
+      try {
+        localStorage.removeItem(SESSION_TOKEN_KEY);
+        localStorage.removeItem(STORAGE_KEY);
+      } catch {
+        // Ignore storage errors
+      }
+      setAuthNotice('تم تسجيل الخروج بنجاح، وحماية خصوصيتك.');
       window.setTimeout(() => setAuthNotice(null), 4000);
-    } catch {
-      setAuthNotice('تعذر تسجيل الخروج حالياً، حاول مرة أخرى.');
-    } finally {
       setAuthBusy(false);
     }
   };
@@ -233,7 +269,7 @@ export default function App() {
       setSecondsUntilWipe(null);
       return;
     }
-    if (messages.length === 0 && (!user && savedConsultations.length === 0)) {
+    if (messages.length === 0 && !user && savedConsultations.length === 0) {
       setSecondsUntilWipe(null);
       return;
     }
@@ -283,19 +319,18 @@ export default function App() {
           : undefined,
       }));
 
+      const newEntry: SavedConsultation = {
+        id: consultationId,
+        title,
+        domain,
+        updatedAt: new Date().toISOString(),
+        messages: lightMessages,
+      };
+
       setSavedConsultations((prev) => {
         const filtered = prev.filter((c) => c.id !== consultationId);
-        const next: SavedConsultation[] = [
-          {
-            id: consultationId,
-            title,
-            domain,
-            updatedAt: new Date().toISOString(),
-            messages: lightMessages,
-          },
-          ...filtered,
-        ].slice(0, 20);
-        if (autoDeleteOption === 'manual') {
+        const next: SavedConsultation[] = [newEntry, ...filtered].slice(0, 20);
+        if (autoDeleteOption === 'manual' || user) {
           try {
             localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
           } catch {
@@ -305,13 +340,17 @@ export default function App() {
         return next;
       });
 
-      if (user && user.emailVerified && autoDeleteOption === 'manual') {
-        void saveConsultationToFirestore(user, consultationId, title, domain, lightMessages).catch(
-          () => {}
-        );
+      if (user) {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
+        void fetch('/api/user/consultations', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ consultation: newEntry }),
+        }).catch(() => {});
       }
     },
-    [autoDeleteOption, user]
+    [autoDeleteOption, sessionToken, user]
   );
 
   const handleNewConsultation = () => {
@@ -332,9 +371,8 @@ export default function App() {
     const useSearch = Boolean(options?.useSearch);
     const text = maskPiiOnSend ? scrubClientPII(rawText) : rawText;
 
-    const consultationId = startFresh || !activeConsultationId
-      ? `consult_${Date.now()}`
-      : activeConsultationId;
+    const consultationId =
+      startFresh || !activeConsultationId ? `consult_${Date.now()}` : activeConsultationId;
     setActiveConsultationId(consultationId);
 
     const priorMessages = startFresh ? [] : messages;
@@ -425,60 +463,60 @@ export default function App() {
         );
       } else {
         const reader = response.body.getReader();
-      const decoder = new TextDecoder('utf-8');
-      let sseBuffer = '';
+        const decoder = new TextDecoder('utf-8');
+        let sseBuffer = '';
 
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
 
-        sseBuffer += decoder.decode(value, { stream: true });
-        const events = sseBuffer.split('\n\n');
-        sseBuffer = events.pop() ?? '';
+          sseBuffer += decoder.decode(value, { stream: true });
+          const events = sseBuffer.split('\n\n');
+          sseBuffer = events.pop() ?? '';
 
-        for (const rawEvent of events) {
-          const lines = rawEvent.split('\n');
-          let eventName = 'message';
-          let dataLine = '';
+          for (const rawEvent of events) {
+            const lines = rawEvent.split('\n');
+            let eventName = 'message';
+            let dataLine = '';
 
-          for (const line of lines) {
-            if (line.startsWith('event:')) {
-              eventName = line.slice(6).trim();
-            } else if (line.startsWith('data:')) {
-              dataLine += line.slice(5).trim();
+            for (const line of lines) {
+              if (line.startsWith('event:')) {
+                eventName = line.slice(6).trim();
+              } else if (line.startsWith('data:')) {
+                dataLine += line.slice(5).trim();
+              }
+            }
+
+            if (!dataLine) continue;
+            const payload = JSON.parse(dataLine) as Record<string, unknown>;
+
+            if (eventName === 'meta') {
+              latestMeta = payload as unknown as ConsultationMeta;
+              setMessages((prev) =>
+                prev.map((m) => (m.id === assistantId ? { ...m, meta: latestMeta } : m))
+              );
+            } else if (eventName === 'chunk') {
+              const chunkText = String(payload.text ?? '');
+              accumulatedText += chunkText;
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId ? { ...m, content: accumulatedText } : m
+                )
+              );
+            } else if (eventName === 'suggestions') {
+              latestSuggestions = (payload.suggestions as string[]) ?? [];
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId
+                    ? { ...m, proactiveSuggestions: latestSuggestions }
+                    : m
+                )
+              );
+            } else if (eventName === 'error') {
+              throw new Error(String(payload.error ?? 'حدث خطأ أثناء المعالجة.'));
             }
           }
-
-          if (!dataLine) continue;
-          const payload = JSON.parse(dataLine) as Record<string, unknown>;
-
-          if (eventName === 'meta') {
-            latestMeta = payload as unknown as ConsultationMeta;
-            setMessages((prev) =>
-              prev.map((m) => (m.id === assistantId ? { ...m, meta: latestMeta } : m))
-            );
-          } else if (eventName === 'chunk') {
-            const chunkText = String(payload.text ?? '');
-            accumulatedText += chunkText;
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantId ? { ...m, content: accumulatedText } : m
-              )
-            );
-          } else if (eventName === 'suggestions') {
-            latestSuggestions = (payload.suggestions as string[]) ?? [];
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantId
-                  ? { ...m, proactiveSuggestions: latestSuggestions }
-                  : m
-              )
-            );
-          } else if (eventName === 'error') {
-            throw new Error(String(payload.error ?? 'حدث خطأ أثناء المعالجة.'));
-          }
         }
-      }
       }
 
       const finalMessages = baseMessages.map((m) =>
@@ -529,10 +567,6 @@ export default function App() {
     const data = (await resp.json()) as { insights?: PlatformInsights };
     if (data.insights) setInsights(data.insights);
 
-    if (user && user.emailVerified) {
-      void logFeedbackToFirestore(user, domain, isHelpful, correctionNote).catch(() => {});
-    }
-
     setMessages((prev) =>
       prev.map((m) =>
         m.id === messageId
@@ -558,7 +592,7 @@ export default function App() {
   const handleDeleteConsultation = (id: string) => {
     setSavedConsultations((prev) => {
       const next = prev.filter((c) => c.id !== id);
-      if (autoDeleteOption === 'manual') {
+      if (autoDeleteOption === 'manual' || user) {
         try {
           localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
         } catch {
@@ -567,8 +601,13 @@ export default function App() {
       }
       return next;
     });
-    if (user && user.emailVerified) {
-      void deleteConsultationFromFirestore(user, id).catch(() => {});
+    if (user) {
+      const headers: Record<string, string> = {};
+      if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
+      void fetch(`/api/user/consultations/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers,
+      }).catch(() => {});
     }
     if (activeConsultationId === id) {
       setMessages([]);
@@ -591,7 +630,7 @@ export default function App() {
         onOpenMobileSidebar={() => setIsMobileSidebarOpen(true)}
         user={user}
         authBusy={authBusy}
-        onSignIn={handleSignIn}
+        onSignIn={handleOpenSignInModal}
         onSignOut={handleSignOut}
       />
 
@@ -623,7 +662,7 @@ export default function App() {
           }
           user={user}
           authBusy={authBusy}
-          onSignIn={handleSignIn}
+          onSignIn={handleOpenSignInModal}
           onSignOut={handleSignOut}
         />
 
@@ -670,6 +709,13 @@ export default function App() {
           )}
         </main>
       </div>
+
+      {/* Popup-Free Email OTP Auth Modal */}
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
+        onAuthenticated={handleAuthenticated}
+      />
 
       {/* On-Demand Calm Breathing Modal */}
       {showBreathingModal && (

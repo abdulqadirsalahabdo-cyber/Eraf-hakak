@@ -29,16 +29,128 @@ import {
   recordFeedbackAndLearn,
   retrieveLearnedLessons,
 } from './learningStore.ts';
+import {
+  createAndSendOtp,
+  deleteUserConsultation,
+  getUserConsultations,
+  isValidEmail,
+  saveUserConsultation,
+  verifyOtpAndLogin,
+  verifySessionToken,
+  type EmailUserProfile,
+} from './authStore.ts';
 import type {
   AttachmentPayload,
   ConsultationMeta,
   ContractAuditResult,
   DraftedDocumentResult,
   LearnedLesson,
+  SavedConsultation,
 } from '../src/types/legal.ts';
 
 export const apiApp = express();
 apiApp.use(express.json({ limit: '16mb' }));
+
+const SESSION_COOKIE_NAME = 'e3raf_session';
+
+function parseCookies(cookieHeader: string | undefined): Record<string, string> {
+  const result: Record<string, string> = {};
+  if (!cookieHeader) return result;
+  for (const part of cookieHeader.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx <= 0) continue;
+    const key = part.slice(0, idx).trim();
+    const val = part.slice(idx + 1).trim();
+    if (key) {
+      try {
+        result[key] = decodeURIComponent(val);
+      } catch {
+        result[key] = val;
+      }
+    }
+  }
+  return result;
+}
+
+function extractSessionToken(req: express.Request): string | null {
+  const authHeader = req.headers.authorization;
+  if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+    const bearer = authHeader.slice(7).trim();
+    if (bearer) return bearer;
+  }
+  const cookies = parseCookies(req.headers.cookie);
+  return cookies[SESSION_COOKIE_NAME] || null;
+}
+
+function getAuthenticatedUser(req: express.Request): EmailUserProfile | null {
+  const token = extractSessionToken(req);
+  return verifySessionToken(token);
+}
+
+function setSessionCookie(res: express.Response, token: string): void {
+  const maxAge = 60 * 60 * 24 * 14;
+  res.setHeader(
+    'Set-Cookie',
+    `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}; HttpOnly; Path=/; Max-Age=${maxAge}; SameSite=Lax`
+  );
+}
+
+function clearSessionCookie(res: express.Response): void {
+  res.setHeader(
+    'Set-Cookie',
+    `${SESSION_COOKIE_NAME}=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax`
+  );
+}
+
+function buildDomainFallbackSuggestions(matchedDomain: string): string[] {
+  if (matchedDomain.includes('العقوبات') || matchedDomain.includes('الجنح') || matchedDomain.includes('الجنائية')) {
+    return [
+      'ما هي المستندات والأدلة المطلوبة لتحرير محضر رسمي ناجح الآن؟',
+      'صِغ لي مذكرة بلاغ للنيابة العامة بالوقائع وأرقام المواد العقابية',
+      'كيف أثبت حقي وأطالب بالتعويض المدني التبعي مع القضية الجنائية؟',
+    ];
+  }
+  if (matchedDomain.includes('جرائم الإنترنت') || matchedDomain.includes('تقنية المعلومات')) {
+    return [
+      'ما هي الشروط الفنية لتجهيز لقطات الشاشة قبل التوجه لمباحث الإنترنت؟',
+      'كيف أتقدم ببلاغ رسمي عبر خط 108 وأحمي حساباتي من الاختراق؟',
+      'ما هي العقوبة القانونية للمتهم وإمكانية المطالبة بتعويض مدني؟',
+    ];
+  }
+  if (matchedDomain.includes('الأحوال الشخصية') || matchedDomain.includes('الأسرة')) {
+    return [
+      'ما هي الأوراق الرسمية المطلوبة لتقديم طلب تسوية في محكمة الأسرة؟',
+      'صِغ لي صيغة دعوى أو إنذار رسمي مناسب لحالتي الأسرية الآن',
+      'كيف تُقدّر المحكمة النفقة أو تضمن تنفيذ الحكم وبنك ناصر الاجتماعي؟',
+    ];
+  }
+  if (matchedDomain.includes('العمل')) {
+    return [
+      'احسب لي قيمة التعويض عن الفصل التعسفي ومكافأة نهاية الخدمة بدقة',
+      'ما هو الميعاد القانوني الحاسم لتقديم شكوى مكتب العمل دون سقوط حقي؟',
+      'صِغ لي شكوى رسمية لمكتب العمل بإثبات الحقوق والمرتبات المتأخرة',
+    ];
+  }
+  if (matchedDomain.includes('الإيجار')) {
+    return [
+      'كيف أقوم بإيداع الأجرة في خزينة المحكمة بإنذار عرض رسمي صحيح؟',
+      'صِغ لي إنذاراً رسمياً على يد محضر لحفظ حقي في عقد الإيجار',
+      'ما هي الحالات الحصرية التي يجوز فيها فسخ عقد الإيجار أو الطرد؟',
+    ];
+  }
+  if (matchedDomain.includes('المستهلك')) {
+    return [
+      'كيف أرفع شكوى رسمية لجهاز حماية المستهلك على رقم 19588 وما هي الأوراق؟',
+      'هل يحق لي استرداد المبلغ نقداً بالكامل أم الاستبدال فقط؟',
+      'صِغ لي صيغة شكوى رسمية موجهة لجهاز حماية المستهلك بالوقائع',
+    ];
+  }
+  return [
+    'صِغ لي إنذاراً رسمياً بالصيغة القانونية المصرية السليمة لهذه المشكلة',
+    'جهّز لي قائمة المستندات المطلوبة والجهة المختصة للتحرك الآن',
+    'ما هو الميعاد القانوني الحاسم الذي يجب عدم تجاوزه في هذه القضية؟',
+  ];
+}
 
 function buildGroundedPrompt(
   query: string,
@@ -56,7 +168,7 @@ function buildGroundedPrompt(
 
   const lessonsContext =
     lessons.length > 0
-      ? `\n### قواعد التحقق ومنع الأخطاء المتعلّمة من حالات واقعية سابقة (التزم بها بدقة):\n${lessons
+      ? `\n### قواعد التحقق ومنع الأخطاء المتعلّمة في مجال "${meta.matchedDomain}" فقط (التزم بها بدقة):\n${lessons
           .map(
             (l) =>
               `- [${l.type === 'correction' ? 'تصحيح مهم' : 'خبرة متعلّمة'} - ${l.domain}]: ${l.preventionRule}`
@@ -76,14 +188,19 @@ function buildGroundedPrompt(
           .join('\n')}\n`
       : '';
 
-  return `### التوجيه النفسي التكيفي للموقف الحالي:
-الحالة النفسية المرصودة للمستخدم: ${meta.sentiment.labelAr}.
-التوجيه الإلزامي للنبرة: ${meta.sentiment.reassuranceLead}
+  return `### التوجيه القانوني الحصري للمسألة الحالية (Strict Legal Context):
+**الفرع القانوني الحصري المسموح بالرد فيه الآن:** ${meta.matchedDomain}.
+- يُمنع منعاً باتاً الخلط أو ذكر أو استدعاء أي قانون من فرع آخر لا يخص هذه الواقعة (لا تذكر قانون العمل في قضايا التحرش أو الجنايات أو الأسرة، ولا تذكر قانون العقوبات في النزاعات العمالية المحضة إلا إذا وُجدت واقعة جنائية صريحة في سؤال المستخدم).
+- اجعل الإجابة علمية، قانونية، صريحة 100%، مركزة ومباشرة على الحل القانوني الفوري لمشكلة المستخدم فقط بدون مقدمات مطوّلة أو تشتت.
 
-### النصوص القانونية المصرية الموثقة (RAG Grounding Context):
+### التوجيه النفسي التكيفي للموقف الحالي:
+الحالة النفسية المرصودة للمستخدم: ${meta.sentiment.labelAr}.
+التوجيه للنبرة: ${meta.sentiment.reassuranceLead}
+
+### النصوص القانونية المصرية الموثقة الحصرية لهذا النطاق:
 ${articlesContext}
 ${lessonsContext}
-### أرقام الجهات والخطوط الساخنة ذات الصلة:
+### أرقام الجهات والخطوط الساخنة ذات الصلة المباشرة:
 ${hotlinesContext}
 ${historyText}
 ### رسالة المستخدم الحالية${hasAttachment ? ' (مرفق معها صورة مستند/عقد للفحص)' : ''}:
@@ -98,11 +215,12 @@ async function generateProactiveSuggestions(
   try {
     const res = await generateWithFallback(
       {
-        contents: `بناءً على استشارة المستخدم في مجال "${matchedDomain}":
+        contents: `أنت مستشار قانوني مصري متخصص في "${matchedDomain}" فقط.
+بناءً على هذه المشكلة المحددة حصراً:
 سؤال المستخدم: ${query.slice(0, 400)}
 ملخص الرد القانوني: ${responseText.slice(0, 700)}
 
-اقترح 3 خطوات استباقية عملية وقصيرة جداً (كل اقتراح بصيغة طلب مباشر من المستخدم بصيغة المتكلم لا يتجاوز 10 كلمات، مثل: "صِغ لي إنذاراً رسمياً على يد محضر الآن" أو "اكتب لي قائمة المستندات المطلوبة لقسم الشرطة").`,
+اقترح 3 أسئلة متابعة ذكية ومرتبطة ارتباطاً مباشراً وحصرياً بنفس هذه المشكلة وفي نفس مجال "${matchedDomain}" فقط (لا تخرج أبداً إلى أي قانون أو موضوع آخر، وكل سؤال بصيغة طلب عملي مباشر من المستخدم لا يتجاوز 11 كلمة).`,
         config: {
           responseMimeType: 'application/json',
           responseSchema: {
@@ -119,18 +237,107 @@ async function generateProactiveSuggestions(
       return parsed.slice(0, 3).map((s) => String(s));
     }
   } catch {
-    // Fallback deterministic suggestions
+    // Fallback strictly matched to the domain
   }
-  return [
-    'صِغ لي إنذاراً رسمياً بالصيغة القانونية المصرية السليمة',
-    'جهّز لي قائمة المستندات والأوراق المطلوبة للتحرك الآن',
-    'ما هو الحل الودي الأقل تكلفة قبل اللجوء للمحكمة؟',
-  ];
+  return buildDomainFallbackSuggestions(matchedDomain);
 }
 
 // Health & Reference Data Endpoints
 apiApp.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'e3raf-ha2ak-api' });
+  res.json({ ok: true, service: 'e3raf-ha2ak-api', timestamp: new Date().toISOString() });
+});
+
+// Popup-Free Email OTP Authentication Endpoints
+apiApp.post('/api/auth/send-otp', async (req, res) => {
+  const { email = '', displayName = '' } = (req.body ?? {}) as {
+    email?: string;
+    displayName?: string;
+  };
+
+  if (!isValidEmail(email.trim().toLowerCase())) {
+    res.status(400).json({ error: 'يرجى إدخال بريد إلكتروني صحيح.' });
+    return;
+  }
+
+  try {
+    const result = await createAndSendOtp(email, displayName);
+    res.json(result);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'تعذر إرسال رمز التحقق حالياً.';
+    const status = msg.includes('الانتظار') ? 429 : 400;
+    res.status(status).json({ error: msg });
+  }
+});
+
+apiApp.post('/api/auth/verify-otp', (req, res) => {
+  const { email = '', code = '' } = (req.body ?? {}) as {
+    email?: string;
+    code?: string;
+  };
+
+  if (!isValidEmail(email.trim().toLowerCase()) || !/^\d{6}$/.test(code.trim())) {
+    res.status(400).json({ error: 'يرجى إدخال البريد الإلكتروني ورمز التحقق المكوّن من 6 أرقام.' });
+    return;
+  }
+
+  try {
+    const { user, token, consultations } = verifyOtpAndLogin(email, code);
+    setSessionCookie(res, token);
+    res.json({ user, token, consultations });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'تعذر التحقق من الرمز.';
+    res.status(400).json({ error: msg });
+  }
+});
+
+apiApp.get('/api/auth/session', (req, res) => {
+  const user = getAuthenticatedUser(req);
+  if (!user) {
+    res.json({ user: null, consultations: [] });
+    return;
+  }
+  const consultations = getUserConsultations(user.uid);
+  res.json({ user, consultations });
+});
+
+apiApp.post('/api/auth/logout', (_req, res) => {
+  clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
+// Authenticated User Consultations Sync Endpoints
+apiApp.get('/api/user/consultations', (req, res) => {
+  const user = getAuthenticatedUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'يرجى تسجيل الدخول بالبريد الإلكتروني أولاً.' });
+    return;
+  }
+  res.json({ consultations: getUserConsultations(user.uid) });
+});
+
+apiApp.post('/api/user/consultations', (req, res) => {
+  const user = getAuthenticatedUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'يرجى تسجيل الدخول بالبريد الإلكتروني أولاً.' });
+    return;
+  }
+  const { consultation } = (req.body ?? {}) as { consultation?: SavedConsultation };
+  if (!consultation || !consultation.id) {
+    res.status(400).json({ error: 'بيانات الاستشارة غير مكتملة.' });
+    return;
+  }
+  const consultations = saveUserConsultation(user.uid, consultation);
+  res.json({ consultations });
+});
+
+apiApp.delete('/api/user/consultations/:id', (req, res) => {
+  const user = getAuthenticatedUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'يرجى تسجيل الدخول بالبريد الإلكتروني أولاً.' });
+    return;
+  }
+  const consultations = deleteUserConsultation(user.uid, req.params.id);
+  res.json({ consultations });
 });
 
 apiApp.get('/api/laws', (_req, res) => {
@@ -248,96 +455,98 @@ async function handleConsultStream(req: express.Request, res: express.Response) 
 
     sendEvent('meta', meta);
 
-    const promptText = buildGroundedPrompt(message, meta, lessons, history, hasAttachment);
-    const contents =
-      hasAttachment && attachment
-        ? {
-            parts: [
-              {
-                inlineData: {
-                  mimeType: attachment.mimeType,
-                  data: attachment.base64Data,
-                },
-              },
-              { text: promptText },
-            ],
-          }
-        : promptText;
-
-    const candidateModels =
-      hasAttachment || useSearch ? FREE_MULTIMODAL_MODELS : FREE_TEXT_MODELS;
-
     let fullText = '';
     const groundingSources: Array<{ title: string; uri: string }> = [];
 
-    for (const model of candidateModels) {
-      try {
-        const ai = getGeminiClient();
-        const baseConfig: Record<string, unknown> = {
-          systemInstruction: BASE_LEGAL_SYSTEM_INSTRUCTION,
-        };
-        if (useSearch && (model === 'gemini-3.6-flash' || model === 'gemini-3.5-flash')) {
-          baseConfig.tools = [{ googleSearch: {} }];
-        }
+    if (!slot.shedLoad) {
+      const promptText = buildGroundedPrompt(message, meta, lessons, history, hasAttachment);
+      const contents =
+        hasAttachment && attachment
+          ? {
+              parts: [
+                {
+                  inlineData: {
+                    mimeType: attachment.mimeType,
+                    data: attachment.base64Data,
+                  },
+                },
+                { text: promptText },
+              ],
+            }
+          : promptText;
 
-        const streamPromise = ai.models.generateContentStream({
-          model,
-          contents,
-          config: buildModelConfig(model, baseConfig),
-        });
+      const candidateModels =
+        hasAttachment || useSearch ? FREE_MULTIMODAL_MODELS : FREE_TEXT_MODELS;
 
-        const stream = await Promise.race([
-          streamPromise,
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`Timeout connecting to ${model}`)), 10000)
-          ),
-        ]);
+      for (const model of candidateModels) {
+        try {
+          const ai = getGeminiClient();
+          const baseConfig: Record<string, unknown> = {
+            systemInstruction: BASE_LEGAL_SYSTEM_INSTRUCTION,
+          };
+          if (useSearch && (model === 'gemini-3.6-flash' || model === 'gemini-3.5-flash')) {
+            baseConfig.tools = [{ googleSearch: {} }];
+          }
 
-        const iterator = stream[Symbol.asyncIterator]();
-        let gotAnyText = false;
+          const streamPromise = ai.models.generateContentStream({
+            model,
+            contents,
+            config: buildModelConfig(model, baseConfig),
+          });
 
-        while (true) {
-          const nextStep = await Promise.race([
-            iterator.next(),
+          const stream = await Promise.race([
+            streamPromise,
             new Promise<never>((_, reject) =>
-              setTimeout(
-                () => reject(new Error(`Timeout waiting for chunk from ${model}`)),
-                gotAnyText ? 12000 : 10000
-              )
+              setTimeout(() => reject(new Error(`Timeout connecting to ${model}`)), 10000)
             ),
           ]);
 
-          if (nextStep.done) break;
-          const c = nextStep.value as GenerateContentResponse;
-          const chunkText = c.text ?? '';
-          if (chunkText) {
-            gotAnyText = true;
-            fullText += chunkText;
-            sendEvent('chunk', { text: chunkText });
-          }
+          const iterator = stream[Symbol.asyncIterator]();
+          let gotAnyText = false;
 
-          const chunks = c.candidates?.[0]?.groundingMetadata?.groundingChunks;
-          if (Array.isArray(chunks)) {
-            for (const g of chunks) {
-              if (g.web?.uri && !groundingSources.some((s) => s.uri === g.web?.uri)) {
-                groundingSources.push({
-                  title: g.web.title || g.web.uri,
-                  uri: g.web.uri,
-                });
+          while (true) {
+            const nextStep = await Promise.race([
+              iterator.next(),
+              new Promise<never>((_, reject) =>
+                setTimeout(
+                  () => reject(new Error(`Timeout waiting for chunk from ${model}`)),
+                  gotAnyText ? 12000 : 10000
+                )
+              ),
+            ]);
+
+            if (nextStep.done) break;
+            const c = nextStep.value as GenerateContentResponse;
+            const chunkText = c.text ?? '';
+            if (chunkText) {
+              gotAnyText = true;
+              fullText += chunkText;
+              sendEvent('chunk', { text: chunkText });
+            }
+
+            const chunks = c.candidates?.[0]?.groundingMetadata?.groundingChunks;
+            if (Array.isArray(chunks)) {
+              for (const g of chunks) {
+                if (g.web?.uri && !groundingSources.some((s) => s.uri === g.web?.uri)) {
+                  groundingSources.push({
+                    title: g.web.title || g.web.uri,
+                    uri: g.web.uri,
+                  });
+                }
               }
             }
           }
-        }
 
-        if (gotAnyText) {
-          break;
+          if (gotAnyText) {
+            break;
+          }
+        } catch {
+          if (fullText.length > 40) break;
         }
-      } catch {
-        if (fullText.length > 40) break;
       }
     }
 
-    // Guaranteed local RAG+Sentiment synthesis if all upstream AI models fail or throttle
+    // Guaranteed local RAG+Sentiment synthesis under peak burst load or if upstream AI models throttle
     if (!fullText.trim()) {
       fullText = buildGroundedEmergencySolution(message, meta, lessons);
       const segments = fullText.split(/(\s+)/);
@@ -368,7 +577,9 @@ async function handleConsultStream(req: express.Request, res: express.Response) 
       });
     }
 
-    const suggestions = await generateProactiveSuggestions(message, fullText, matchedDomain);
+    const suggestions = slot.shedLoad
+      ? buildDomainFallbackSuggestions(matchedDomain)
+      : await generateProactiveSuggestions(message, fullText, matchedDomain);
     sendEvent('suggestions', { suggestions });
 
     if (!hasHistory && !hasAttachment && fullText.length > 80) {
@@ -396,10 +607,7 @@ async function handleConsultStream(req: express.Request, res: express.Response) 
       const fallbackText = buildGroundedEmergencySolution(message, fallbackMeta, lessons);
       sendEvent('chunk', { text: fallbackText });
       sendEvent('suggestions', {
-        suggestions: [
-          'صِغ لي إنذاراً رسمياً بالصيغة القانونية المصرية السليمة',
-          'جهّز لي قائمة المستندات والأوراق المطلوبة للتحرك الآن',
-        ],
+        suggestions: buildDomainFallbackSuggestions(matchedDomain),
       });
       sendEvent('done', {});
       res.end();

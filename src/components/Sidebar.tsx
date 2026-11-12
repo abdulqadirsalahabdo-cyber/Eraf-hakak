@@ -15,8 +15,7 @@ import {
   Wind,
   X,
 } from 'lucide-react';
-import type { User } from 'firebase/auth';
-import type { AutoDeleteOption, SavedConsultation } from '../types/legal';
+import type { AutoDeleteOption, EmailUserProfile, SavedConsultation } from '../types/legal';
 import type { WorkspaceTab } from './TopBar';
 
 interface SidebarProps {
@@ -36,7 +35,7 @@ interface SidebarProps {
   onChangeAutoDelete: (opt: AutoDeleteOption) => void;
   secondsUntilWipe: number | null;
   onInstantWipe: () => void;
-  user: User | null;
+  user: EmailUserProfile | null;
   authBusy: boolean;
   onSignIn: () => void;
   onSignOut: () => void;
@@ -108,29 +107,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const content = (
     <div className="flex h-full flex-col justify-between bg-[#FDFCFA] dark:bg-slate-900">
       <div className="flex-1 overflow-y-auto p-4 space-y-5">
-        {/* Account Card for Mobile / Quick Status */}
+        {/* Account Card for Email OTP Profile */}
         <section className="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-950/60">
           {user ? (
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2.5 min-w-0">
-                {user.photoURL ? (
-                  <img
-                    src={user.photoURL}
-                    alt={user.displayName ?? 'المستخدم'}
-                    referrerPolicy="no-referrer"
-                    className="h-8 w-8 rounded-full object-cover shrink-0"
-                  />
-                ) : (
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-700 text-xs font-bold text-white">
-                    {(user.displayName ?? 'م').slice(0, 1)}
-                  </span>
-                )}
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-700 text-xs font-bold text-white">
+                  {(user.displayName || user.email || 'م').slice(0, 1)}
+                </span>
                 <div className="min-w-0">
                   <div className="truncate text-sm font-bold text-slate-900 dark:text-slate-100">
                     {user.displayName || 'مستخدم مسجل'}
                   </div>
-                  <div className="truncate text-[11px] text-teal-700 dark:text-teal-400">
-                    مزامنة سحابية آمنة مفعّلة
+                  <div className="truncate text-[11px] text-teal-700 dark:text-teal-400" dir="ltr">
+                    {user.email}
                   </div>
                 </div>
               </div>
@@ -152,7 +142,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               className="flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-teal-800 dark:bg-slate-800 dark:hover:bg-teal-700"
             >
               <LogIn className="h-3.5 w-3.5" />
-              <span>تسجيل الدخول بحساب جوجل</span>
+              <span>تسجيل الدخول بالبريد (OTP)</span>
             </button>
           )}
         </section>

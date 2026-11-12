@@ -376,23 +376,55 @@ export default function App() {
     let latestSuggestions: string[] | undefined;
 
     try {
-      const response = await fetch('/api/consult/stream', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: text,
-          history: historyPayload,
-          attachment: attachment ?? null,
-          useSearch,
-        }),
+      const payloadBody = JSON.stringify({
+        message: text,
+        history: historyPayload,
+        attachment: attachment ?? null,
+        useSearch,
       });
 
+      let response = await fetch('/api/consult/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payloadBody,
+      });
+
+      // Fallback alias endpoint if primary stream path is missing or misrouted
+      if (response.status === 404 || response.status === 405) {
+        response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: payloadBody,
+        });
+      }
+
       if (!response.ok || !response.body) {
+        const contentType = response.headers.get('content-type') || '';
         const errBody = await response.text();
+        if (response.status === 404 || contentType.includes('text/html')) {
+          throw new Error(
+            'مسار الخادم (/api/consult/stream) غير متاح (404). يرجى التحقق من ملف vercel.json وإعدادات النشر.'
+          );
+        }
         throw new Error(errBody || 'تعذر الاتصال بخادم الاستشارات القانونية.');
       }
 
-      const reader = response.body.getReader();
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const jsonFallback = (await response.json()) as {
+          reply?: string;
+          text?: string;
+          error?: string;
+        };
+        if (jsonFallback.error) throw new Error(jsonFallback.error);
+        accumulatedText = jsonFallback.reply || jsonFallback.text || '';
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId ? { ...m, content: accumulatedText, isStreaming: false } : m
+          )
+        );
+      } else {
+        const reader = response.body.getReader();
       const decoder = new TextDecoder('utf-8');
       let sseBuffer = '';
 
@@ -446,6 +478,7 @@ export default function App() {
             throw new Error(String(payload.error ?? 'حدث خطأ أثناء المعالجة.'));
           }
         }
+      }
       }
 
       const finalMessages = baseMessages.map((m) =>

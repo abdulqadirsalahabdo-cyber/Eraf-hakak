@@ -7,6 +7,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DATA_DIR = path.join(__dirname, 'data');
 const STORE_PATH = path.join(DATA_DIR, 'learned_rules.json');
+const TMP_STORE_PATH = '/tmp/e3raf_learned_rules.json';
 
 interface StoreSchema {
   totalVerifiedCases: number;
@@ -62,8 +63,10 @@ let storeCache: StoreSchema | null = null;
 function ensureStore(): StoreSchema {
   if (storeCache) return storeCache;
   try {
-    if (!fs.existsSync(DATA_DIR)) {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
+    if (fs.existsSync(TMP_STORE_PATH)) {
+      const rawTmp = fs.readFileSync(TMP_STORE_PATH, 'utf-8');
+      storeCache = JSON.parse(rawTmp) as StoreSchema;
+      return storeCache;
     }
     if (fs.existsSync(STORE_PATH)) {
       const raw = fs.readFileSync(STORE_PATH, 'utf-8');
@@ -95,7 +98,11 @@ function persistStore(data: StoreSchema): void {
     }
     fs.writeFileSync(STORE_PATH, JSON.stringify(data, null, 2), 'utf-8');
   } catch {
-    // Non-fatal in read-only environments; memory store remains active
+    try {
+      fs.writeFileSync(TMP_STORE_PATH, JSON.stringify(data, null, 2), 'utf-8');
+    } catch {
+      // Memory store remains active
+    }
   }
 }
 
